@@ -8273,7 +8273,7 @@ void ImGui::ShowAboutWindow(bool* p_open)
 
 void ImGui::ShowMemoryViewerWindow(bool* p_open)
 {
-    if (!ImGui::Begin("Memory Viewer", p_open, ImGuiWindowFlags_AlwaysAutoResize))
+    if (!ImGui::Begin("Memory Viewer", p_open))
     {
         ImGui::End();
         return;
@@ -8287,12 +8287,42 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
     static int num_rows = 16;
     static int display_format = 0; // 0=Hex, 1=Decimal, 2=Binary
     static bool show_ascii = true;
+    static bool use_demo_data = true;
+    
+    // Demo data - a safe buffer to demonstrate the memory viewer
+    static unsigned char demo_buffer[1024];
+    static bool demo_buffer_initialized = false;
+    if (!demo_buffer_initialized)
+    {
+        // Initialize with some sample data
+        const char* sample_text = "Dear ImGui Memory Viewer - This is sample data to demonstrate the memory viewer functionality safely.";
+        size_t text_len = strlen(sample_text);
+        memcpy(demo_buffer, sample_text, text_len < sizeof(demo_buffer) ? text_len : sizeof(demo_buffer));
+        // Fill rest with pattern
+        for (size_t i = text_len; i < sizeof(demo_buffer); i++)
+            demo_buffer[i] = (unsigned char)(i & 0xFF);
+        demo_buffer_initialized = true;
+    }
     
     ImGui::Text("Memory Viewer");
     ImGui::Separator();
     
+    // Demo mode toggle
+    ImGui::Checkbox("Use Demo Data (Safe)", &use_demo_data);
+    ImGui::SameLine();
+    HelpMarker("When enabled, displays safe demo data. When disabled, you can enter any memory address (DANGEROUS!).");
+    
+    if (use_demo_data)
+    {
+        base_address = demo_buffer;
+        snprintf(address_input, IM_ARRAYSIZE(address_input), "0x%016llX", (unsigned long long)base_address);
+    }
+    
+    ImGui::Separator();
+    
     // Address input
     ImGui::PushItemWidth(200);
+    ImGui::BeginDisabled(use_demo_data);
     if (ImGui::InputText("Address", address_input, IM_ARRAYSIZE(address_input), ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_EnterReturnsTrue))
     {
         // Parse the address input
@@ -8302,10 +8332,14 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
             base_address = (void*)addr_value;
         }
     }
+    ImGui::EndDisabled();
     ImGui::PopItemWidth();
     
     ImGui::SameLine();
-    HelpMarker("Enter a memory address in hexadecimal format (e.g., 0x12345678).\nPress Enter to update the view.\n\nWARNING: Reading arbitrary memory addresses can crash the application!");
+    if (use_demo_data)
+        HelpMarker("Viewing safe demo data buffer. Disable 'Use Demo Data' to enter a custom address.");
+    else
+        HelpMarker("Enter a memory address in hexadecimal format (e.g., 0x12345678).\nPress Enter to update the view.\n\nWARNING: Reading arbitrary memory addresses can crash the application!");
     
     // Display options
     ImGui::Separator();
@@ -8318,17 +8352,23 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
     ImGui::Separator();
     
     // Navigation buttons
+    ImGui::BeginDisabled(use_demo_data && (char*)base_address <= (char*)demo_buffer);
     if (ImGui::Button("<< Previous Page"))
     {
         base_address = (void*)((char*)base_address - (bytes_per_row * num_rows));
         snprintf(address_input, IM_ARRAYSIZE(address_input), "0x%016llX", (unsigned long long)base_address);
     }
+    ImGui::EndDisabled();
+    
     ImGui::SameLine();
+    
+    ImGui::BeginDisabled(use_demo_data && ((char*)base_address + (bytes_per_row * num_rows) >= (char*)demo_buffer + sizeof(demo_buffer)));
     if (ImGui::Button("Next Page >>"))
     {
         base_address = (void*)((char*)base_address + (bytes_per_row * num_rows));
         snprintf(address_input, IM_ARRAYSIZE(address_input), "0x%016llX", (unsigned long long)base_address);
     }
+    ImGui::EndDisabled();
     
     ImGui::Separator();
     
@@ -8367,31 +8407,63 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
                 // Data column
                 ImGui::TableSetColumnIndex(1);
                 
-                // Note: Reading arbitrary memory is dangerous and can crash!
-                // In a real application, you should validate the address and handle exceptions
-                // For demo purposes, we'll display a warning instead of actually reading memory
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "[Memory read disabled for safety]");
-                
-                // In a production memory viewer, you would do something like:
-                // unsigned char* mem_ptr = (unsigned char*)row_addr;
-                // for (int i = 0; i < bytes_per_row; i++)
-                // {
-                //     if (display_format == 0) ImGui::Text("%02X ", mem_ptr[i]);
-                //     else if (display_format == 1) ImGui::Text("%3d ", mem_ptr[i]);
-                //     else ImGui::Text("%08b ", mem_ptr[i]);
-                // }
-                
-                // ASCII column
-                if (show_ascii)
+                if (use_demo_data)
                 {
-                    ImGui::TableSetColumnIndex(2);
-                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "[ASCII view]");
-                    // In production:
-                    // for (int i = 0; i < bytes_per_row; i++)
-                    // {
-                    //     unsigned char c = mem_ptr[i];
-                    //     ImGui::Text("%c", (c >= 32 && c < 127) ? c : '.');
-                    // }
+                    // Safe to read demo buffer
+                    size_t offset = (size_t)((char*)row_addr - (char*)demo_buffer);
+                    if (offset < sizeof(demo_buffer))
+                    {
+                        unsigned char* mem_ptr = (unsigned char*)row_addr;
+                        size_t bytes_to_show = bytes_per_row;
+                        if (offset + bytes_to_show > sizeof(demo_buffer))
+                            bytes_to_show = sizeof(demo_buffer) - offset;
+                        
+                        for (size_t i = 0; i < bytes_to_show; i++)
+                        {
+                            if (i > 0) ImGui::SameLine();
+                            if (display_format == 0)
+                                ImGui::Text("%02X", mem_ptr[i]);
+                            else if (display_format == 1)
+                                ImGui::Text("%3d", mem_ptr[i]);
+                            else // binary
+                            {
+                                char binary[9];
+                                for (int b = 7; b >= 0; b--)
+                                    binary[7 - b] = ((mem_ptr[i] >> b) & 1) ? '1' : '0';
+                                binary[8] = '\0';
+                                ImGui::Text("%s", binary);
+                            }
+                        }
+                        
+                        // ASCII column
+                        if (show_ascii)
+                        {
+                            ImGui::TableSetColumnIndex(2);
+                            for (size_t i = 0; i < bytes_to_show; i++)
+                            {
+                                unsigned char c = mem_ptr[i];
+                                if (i > 0) ImGui::SameLine();
+                                ImGui::Text("%c", (c >= 32 && c < 127) ? c : '.');
+                            }
+                        }
+                    }
+                    else
+                    {
+                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "[Out of demo buffer range]");
+                    }
+                }
+                else
+                {
+                    // Not safe to read arbitrary memory - show warning
+                    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "[Memory read disabled for safety]");
+                    ImGui::SameLine();
+                    HelpMarker("Enable 'Use Demo Data' to see actual memory contents in a safe way.");
+                    
+                    if (show_ascii)
+                    {
+                        ImGui::TableSetColumnIndex(2);
+                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "[Not available]");
+                    }
                 }
             }
             
@@ -8407,8 +8479,17 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
     }
     
     ImGui::Separator();
-    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: This is a demonstration. Actual memory reading is disabled for safety.");
-    ImGui::TextWrapped("In a real debugging scenario, reading arbitrary memory addresses requires proper validation and exception handling to prevent crashes.");
+    
+    if (use_demo_data)
+    {
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Viewing safe demo data (%d bytes)", (int)sizeof(demo_buffer));
+        ImGui::TextWrapped("This is a demonstration of how a memory viewer works using safe, pre-allocated data.");
+    }
+    else
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Memory reading from arbitrary addresses is disabled for safety!");
+        ImGui::TextWrapped("In a real debugging scenario with proper exception handling, you could view actual memory. Enable 'Use Demo Data' to see a working demonstration.");
+    }
     
     ImGui::End();
 }
