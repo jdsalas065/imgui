@@ -133,6 +133,7 @@ Index of this file:
 
 // System includes
 #include <ctype.h>          // toupper
+#include <errno.h>          // errno
 #include <limits.h>         // INT_MIN, INT_MAX
 #include <math.h>           // sqrtf, powf, cosf, sinf, floorf, ceilf
 #include <stdio.h>          // vsnprintf, sscanf, printf
@@ -8281,8 +8282,9 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
     IMGUI_DEMO_MARKER("Tools/Memory Viewer");
 
     // Static state for the memory viewer
-    static char address_input[32] = "0x0000000000000000";
+    static char address_input[32] = "";
     static void* base_address = nullptr;
+    static bool address_input_initialized = false;
     static int bytes_per_row = 16;
     static int num_rows = 16;
     static int display_format = 0; // 0=Hex, 1=Decimal, 2=Binary
@@ -8307,6 +8309,14 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
     ImGui::Text("Memory Viewer");
     ImGui::Separator();
     
+    // Initialize address input on first run
+    if (!address_input_initialized)
+    {
+        base_address = demo_buffer;
+        snprintf(address_input, IM_ARRAYSIZE(address_input), "%p", base_address);
+        address_input_initialized = true;
+    }
+    
     // Demo mode toggle
     ImGui::Checkbox("Use Demo Data (Safe)", &use_demo_data);
     ImGui::SameLine();
@@ -8330,8 +8340,10 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
         const char* parse_start = address_input;
         if (address_input[0] == '0' && (address_input[1] == 'x' || address_input[1] == 'X'))
             parse_start += 2; // Skip "0x" prefix
+        errno = 0;
         unsigned long long addr_value = strtoull(parse_start, &end_ptr, 16);
-        if (end_ptr != parse_start && addr_value != ULLONG_MAX)
+        // Check for valid parse: end_ptr moved, no overflow error, and result within uintptr_t range
+        if (end_ptr != parse_start && errno != ERANGE && addr_value <= (unsigned long long)(uintptr_t)-1)
         {
             base_address = (void*)(uintptr_t)addr_value;
         }
@@ -8379,7 +8391,7 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
     // Display memory contents
     if (base_address != nullptr)
     {
-        ImGui::Text("Memory at address: 0x%016llX", (unsigned long long)base_address);
+        ImGui::Text("Memory at address: %p", base_address);
         ImGui::Separator();
         
         // Create a scrollable region for memory display
@@ -8413,7 +8425,7 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
                 
                 // Address column
                 ImGui::TableSetColumnIndex(0);
-                ImGui::Text("0x%016llX", (unsigned long long)row_addr);
+                ImGui::Text("%p", row_addr);
                 
                 // Data column
                 ImGui::TableSetColumnIndex(1);
