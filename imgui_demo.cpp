@@ -8310,12 +8310,12 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
     // Demo mode toggle
     ImGui::Checkbox("Use Demo Data (Safe)", &use_demo_data);
     ImGui::SameLine();
-    HelpMarker("When enabled, displays safe demo data. When disabled, you can enter any memory address (DANGEROUS!).");
+    HelpMarker("When enabled, displays safe demo data. When disabled, you can enter any memory address (Dangerous!).");
     
     if (use_demo_data)
     {
         base_address = demo_buffer;
-        snprintf(address_input, IM_ARRAYSIZE(address_input), "0x%016llX", (unsigned long long)base_address);
+        snprintf(address_input, IM_ARRAYSIZE(address_input), "%p", base_address);
     }
     
     ImGui::Separator();
@@ -8325,11 +8325,15 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
     ImGui::BeginDisabled(use_demo_data);
     if (ImGui::InputText("Address", address_input, IM_ARRAYSIZE(address_input), ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_EnterReturnsTrue))
     {
-        // Parse the address input
-        unsigned long long addr_value = 0;
-        if (sscanf(address_input, "%llx", &addr_value) == 1 || sscanf(address_input, "0x%llx", &addr_value) == 1)
+        // Parse the address input using strtoull for safer parsing
+        char* end_ptr = NULL;
+        const char* parse_start = address_input;
+        if (address_input[0] == '0' && (address_input[1] == 'x' || address_input[1] == 'X'))
+            parse_start += 2; // Skip "0x" prefix
+        unsigned long long addr_value = strtoull(parse_start, &end_ptr, 16);
+        if (end_ptr != parse_start && addr_value != ULLONG_MAX)
         {
-            base_address = (void*)addr_value;
+            base_address = (void*)(uintptr_t)addr_value;
         }
     }
     ImGui::EndDisabled();
@@ -8356,7 +8360,7 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
     if (ImGui::Button("<< Previous Page"))
     {
         base_address = (void*)((char*)base_address - (bytes_per_row * num_rows));
-        snprintf(address_input, IM_ARRAYSIZE(address_input), "0x%016llX", (unsigned long long)base_address);
+        snprintf(address_input, IM_ARRAYSIZE(address_input), "%p", base_address);
     }
     ImGui::EndDisabled();
     
@@ -8366,7 +8370,7 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
     if (ImGui::Button("Next Page >>"))
     {
         base_address = (void*)((char*)base_address + (bytes_per_row * num_rows));
-        snprintf(address_input, IM_ARRAYSIZE(address_input), "0x%016llX", (unsigned long long)base_address);
+        snprintf(address_input, IM_ARRAYSIZE(address_input), "%p", base_address);
     }
     ImGui::EndDisabled();
     
@@ -8381,17 +8385,24 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
         // Create a scrollable region for memory display
         ImGui::BeginChild("MemoryContent", ImVec2(0, 400), ImGuiChildFlags_FrameStyle);
         
-        // Use monospace font for better alignment
-        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // Use default font (usually monospace works better)
+        // Note: Ideally we'd use a monospace font for better alignment of hex values
+        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+        
+        // Column width calculations (approximate character widths)
+        const float HEX_BYTE_WIDTH = 24.0f;     // Width for "XX " in hex format
+        const float DEC_BYTE_WIDTH = 32.0f;     // Width for "123 " in decimal format
+        const float BIN_BYTE_WIDTH = 72.0f;     // Width for "11111111 " in binary format
+        const float ASCII_BYTE_WIDTH = 8.0f;    // Width for single ASCII character
         
         // Display memory in a table
         if (ImGui::BeginTable("MemoryTable", show_ascii ? 3 : 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
         {
             // Setup columns
             ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-            ImGui::TableSetupColumn("Data", ImGuiTableColumnFlags_WidthFixed, (float)(bytes_per_row * (display_format == 0 ? 24 : (display_format == 1 ? 32 : 72))));
+            float data_width = (float)(bytes_per_row * (display_format == 0 ? HEX_BYTE_WIDTH : (display_format == 1 ? DEC_BYTE_WIDTH : BIN_BYTE_WIDTH)));
+            ImGui::TableSetupColumn("Data", ImGuiTableColumnFlags_WidthFixed, data_width);
             if (show_ascii)
-                ImGui::TableSetupColumn("ASCII", ImGuiTableColumnFlags_WidthFixed, (float)(bytes_per_row * 8 + 20));
+                ImGui::TableSetupColumn("ASCII", ImGuiTableColumnFlags_WidthFixed, (float)(bytes_per_row * ASCII_BYTE_WIDTH + 20));
             ImGui::TableHeadersRow();
             
             // Display rows
@@ -8443,7 +8454,7 @@ void ImGui::ShowMemoryViewerWindow(bool* p_open)
                             {
                                 unsigned char c = mem_ptr[i];
                                 if (i > 0) ImGui::SameLine();
-                                ImGui::Text("%c", (c >= 32 && c < 127) ? c : '.');
+                                ImGui::Text("%c", isprint(c) ? c : '.');
                             }
                         }
                     }
