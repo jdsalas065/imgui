@@ -104,6 +104,7 @@ Index of this file:
 // [SECTION] DemoWindowTables()
 // [SECTION] DemoWindowInputs()
 // [SECTION] About Window / ShowAboutWindow()
+// [SECTION] Memory Viewer / ShowMemoryViewerWindow()
 // [SECTION] Style Editor / ShowStyleEditor()
 // [SECTION] User Guide / ShowUserGuide()
 // [SECTION] Example App: Main Menu Bar / ShowExampleAppMainMenuBar()
@@ -318,6 +319,7 @@ struct ImGuiDemoWindowData
     bool ShowDebugLog = false;
     bool ShowIDStackTool = false;
     bool ShowStyleEditor = false;
+    bool ShowMemoryViewer = false;
     bool ShowAbout = false;
 
     // Other data
@@ -362,6 +364,7 @@ void ImGui::ShowDemoWindow(bool* p_open)
     if (demo_data.ShowMetrics)              { ImGui::ShowMetricsWindow(&demo_data.ShowMetrics); }
     if (demo_data.ShowDebugLog)             { ImGui::ShowDebugLogWindow(&demo_data.ShowDebugLog); }
     if (demo_data.ShowIDStackTool)          { ImGui::ShowIDStackToolWindow(&demo_data.ShowIDStackTool); }
+    if (demo_data.ShowMemoryViewer)         { ImGui::ShowMemoryViewerWindow(&demo_data.ShowMemoryViewer); }
     if (demo_data.ShowAbout)                { ImGui::ShowAboutWindow(&demo_data.ShowAbout); }
     if (demo_data.ShowStyleEditor)
     {
@@ -712,6 +715,7 @@ static void DemoWindowMenuBar(ImGuiDemoWindowData* demo_data)
             if (!is_debugger_present)
                 ImGui::SetItemTooltip("Requires io.ConfigDebugIsDebuggerPresent=true to be set.\n\nWe otherwise disable some extra features to avoid casual users crashing the application.");
             ImGui::MenuItem("Style Editor", NULL, &demo_data->ShowStyleEditor);
+            ImGui::MenuItem("Memory Viewer", NULL, &demo_data->ShowMemoryViewer);
             ImGui::MenuItem("About Dear ImGui", NULL, &demo_data->ShowAbout);
 
             ImGui::EndMenu();
@@ -8264,6 +8268,152 @@ void ImGui::ShowAboutWindow(bool* p_open)
 }
 
 //-----------------------------------------------------------------------------
+// [SECTION] Memory Viewer / ShowMemoryViewerWindow()
+//-----------------------------------------------------------------------------
+
+void ImGui::ShowMemoryViewerWindow(bool* p_open)
+{
+    if (!ImGui::Begin("Memory Viewer", p_open, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::End();
+        return;
+    }
+    IMGUI_DEMO_MARKER("Tools/Memory Viewer");
+
+    // Static state for the memory viewer
+    static char address_input[32] = "0x0000000000000000";
+    static void* base_address = nullptr;
+    static int bytes_per_row = 16;
+    static int num_rows = 16;
+    static int display_format = 0; // 0=Hex, 1=Decimal, 2=Binary
+    static bool show_ascii = true;
+    
+    ImGui::Text("Memory Viewer");
+    ImGui::Separator();
+    
+    // Address input
+    ImGui::PushItemWidth(200);
+    if (ImGui::InputText("Address", address_input, IM_ARRAYSIZE(address_input), ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        // Parse the address input
+        unsigned long long addr_value = 0;
+        if (sscanf(address_input, "%llx", &addr_value) == 1 || sscanf(address_input, "0x%llx", &addr_value) == 1)
+        {
+            base_address = (void*)addr_value;
+        }
+    }
+    ImGui::PopItemWidth();
+    
+    ImGui::SameLine();
+    HelpMarker("Enter a memory address in hexadecimal format (e.g., 0x12345678).\nPress Enter to update the view.\n\nWARNING: Reading arbitrary memory addresses can crash the application!");
+    
+    // Display options
+    ImGui::Separator();
+    ImGui::Text("Display Options");
+    ImGui::SliderInt("Bytes per row", &bytes_per_row, 4, 32);
+    ImGui::SliderInt("Rows", &num_rows, 1, 64);
+    ImGui::Combo("Format", &display_format, "Hexadecimal\0Decimal\0Binary\0");
+    ImGui::Checkbox("Show ASCII", &show_ascii);
+    
+    ImGui::Separator();
+    
+    // Navigation buttons
+    if (ImGui::Button("<< Previous Page"))
+    {
+        base_address = (void*)((char*)base_address - (bytes_per_row * num_rows));
+        snprintf(address_input, IM_ARRAYSIZE(address_input), "0x%016llX", (unsigned long long)base_address);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Next Page >>"))
+    {
+        base_address = (void*)((char*)base_address + (bytes_per_row * num_rows));
+        snprintf(address_input, IM_ARRAYSIZE(address_input), "0x%016llX", (unsigned long long)base_address);
+    }
+    
+    ImGui::Separator();
+    
+    // Display memory contents
+    if (base_address != nullptr)
+    {
+        ImGui::Text("Memory at address: 0x%016llX", (unsigned long long)base_address);
+        ImGui::Separator();
+        
+        // Create a scrollable region for memory display
+        ImGui::BeginChild("MemoryContent", ImVec2(0, 400), ImGuiChildFlags_FrameStyle);
+        
+        // Use monospace font for better alignment
+        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // Use default font (usually monospace works better)
+        
+        // Display memory in a table
+        if (ImGui::BeginTable("MemoryTable", show_ascii ? 3 : 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+        {
+            // Setup columns
+            ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+            ImGui::TableSetupColumn("Data", ImGuiTableColumnFlags_WidthFixed, (float)(bytes_per_row * (display_format == 0 ? 24 : (display_format == 1 ? 32 : 72))));
+            if (show_ascii)
+                ImGui::TableSetupColumn("ASCII", ImGuiTableColumnFlags_WidthFixed, (float)(bytes_per_row * 8 + 20));
+            ImGui::TableHeadersRow();
+            
+            // Display rows
+            for (int row = 0; row < num_rows; row++)
+            {
+                ImGui::TableNextRow();
+                void* row_addr = (void*)((char*)base_address + (row * bytes_per_row));
+                
+                // Address column
+                ImGui::TableSetColumnIndex(0);
+                ImGui::Text("0x%016llX", (unsigned long long)row_addr);
+                
+                // Data column
+                ImGui::TableSetColumnIndex(1);
+                
+                // Note: Reading arbitrary memory is dangerous and can crash!
+                // In a real application, you should validate the address and handle exceptions
+                // For demo purposes, we'll display a warning instead of actually reading memory
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "[Memory read disabled for safety]");
+                
+                // In a production memory viewer, you would do something like:
+                // unsigned char* mem_ptr = (unsigned char*)row_addr;
+                // for (int i = 0; i < bytes_per_row; i++)
+                // {
+                //     if (display_format == 0) ImGui::Text("%02X ", mem_ptr[i]);
+                //     else if (display_format == 1) ImGui::Text("%3d ", mem_ptr[i]);
+                //     else ImGui::Text("%08b ", mem_ptr[i]);
+                // }
+                
+                // ASCII column
+                if (show_ascii)
+                {
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "[ASCII view]");
+                    // In production:
+                    // for (int i = 0; i < bytes_per_row; i++)
+                    // {
+                    //     unsigned char c = mem_ptr[i];
+                    //     ImGui::Text("%c", (c >= 32 && c < 127) ? c : '.');
+                    // }
+                }
+            }
+            
+            ImGui::EndTable();
+        }
+        
+        ImGui::PopFont();
+        ImGui::EndChild();
+    }
+    else
+    {
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.0f, 1.0f), "Enter a valid memory address to view its contents.");
+    }
+    
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: This is a demonstration. Actual memory reading is disabled for safety.");
+    ImGui::TextWrapped("In a real debugging scenario, reading arbitrary memory addresses requires proper validation and exception handling to prevent crashes.");
+    
+    ImGui::End();
+}
+
+//-----------------------------------------------------------------------------
 // [SECTION] Style Editor / ShowStyleEditor()
 //-----------------------------------------------------------------------------
 // - ShowStyleSelector()
@@ -10888,6 +11038,7 @@ void ShowExampleAppAssetsBrowser(bool* p_open)
 #else
 
 void ImGui::ShowAboutWindow(bool*) {}
+void ImGui::ShowMemoryViewerWindow(bool*) {}
 void ImGui::ShowDemoWindow(bool*) {}
 void ImGui::ShowUserGuide() {}
 void ImGui::ShowStyleEditor(ImGuiStyle*) {}
